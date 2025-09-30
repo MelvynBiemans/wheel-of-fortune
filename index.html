@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Wheel of Fortune – BIEMANS Polska (no-50 win + sound)</title>
+<style>
+  :root { --bg:#0e1122; --text:#eef3ff; }
+  html,body{height:100%;margin:0;background:radial-gradient(1200px 700px at 20% -10%, #1a2040 0%, var(--bg) 40%, #070916 100%);color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial}
+  .wrap{display:grid;place-items:center;min-height:100%;gap:18px}
+  .stage{position:relative;width:min(96vw,900px);aspect-ratio:1/1}
+  canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+  /* pointer verwijderd */
+  .hint{font-size:12px;color:#a9b7d8;opacity:.75}
+  .overlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:10;pointer-events:none;
+            background:radial-gradient(600px 400px at 50% 40%, rgba(0,0,0,.25), rgba(0,0,0,.6));}
+  .overlay.show{display:flex;animation:fade .18s ease-out both}
+  .value{font-weight:1000;font-size:min(22vh,22vw);letter-spacing:1px;line-height:1; text-shadow:0 10px 30px rgba(0,0,0,.55)}
+  @keyframes fade{from{opacity:0}to{opacity:1}}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="stage" id="stage" aria-label="Wheel of Fortune (klik midden om te draaien)">
+      <canvas id="wheel" width="1200" height="1200"></canvas>
+      <canvas id="confetti" width="1200" height="1200"></canvas>
+      <!-- pointer div is verwijderd -->
+    </div>
+    <div class="hint">Klik op het <strong>BIEMANS Polska</strong> logo (midden) om te draaien</div>
+  </div>
+
+  <div class="overlay" id="overlay"><div class="value" id="value"> </div></div>
+
+<script>
+(() => {
+  // ------------------ CONFIG ------------------
+  // 50% is uitgesloten (noWin:true) en wordt visueel extra opvallend (zwart vlak + felrode tekst)
+  const SECTIONS = [
+    { label: "50%", weight: 2.2, noWin: true }, // uitgesloten, valt op
+    { label: "10%", weight: 1 },
+    { label: "20%", weight: 1 },
+    { label: "0%",  weight: 1 },
+    { label: "5%",  weight: 1 },
+    { label: "0%",  weight: 1 },
+    { label: "10%", weight: 1 },
+    { label: "15%", weight: 1 },
+    { label: "15%", weight: 1 },
+    { label: "10%", weight: 1 },
+    { label: "20%", weight: 1 },
+    { label: "5%",  weight: 1 },
+    { label: "20%", weight: 1 },
+    { label: "15%", weight: 1 },
+    { label: "5%",  weight: 1 },
+    { label: "15%", weight: 1 },
+    { label: "5%",  weight: 1 },
+    { label: "0%",  weight: 1 },
+    { label: "10%", weight: 1 },
+    { label: "20%", weight: 1 },
+    { label: "0%",  weight: 1 },
+  ];
+  const EXCLUDE_NOWIN = true;
+
+  // ------------------ STATE -------------------
+  const wheel = document.getElementById("wheel");
+  const ctx = wheel.getContext("2d");
+  const confetti = document.getElementById("confetti");
+  const cfx = confetti.getContext("2d");
+  const stage = document.getElementById("stage");
+  const overlay = document.getElementById("overlay");
+  const valueEl = document.getElementById("value");
+
+  const W = wheel.width, H = wheel.height;
+  const CX = W/2, CY = H/2;
+
+  const R = Math.min(W,H)*0.46;      // radius wiel
+  const R_LABEL = R*0.78;            // tekstpositie
+  const CENTER_PLATE_R = R*0.32;     // klikbare midden
+  const POINTER_ANGLE = -Math.PI/2;  // pijl-oriëntatie (visueel is pijl weg)
+
+  let rotation = 0;
+  let spinning = false;
+  let logoImg = null;
+
+  // highlight state
+  let dynamicHighlightIdx = null; // live segment
+  let lockedIdx = null;           // winnende segment (blijft opgelicht)
+
+  // ---- variabele segment-layout (cumulatieve hoeken) ----
+  let layout = null; // { totalW, slices:[{start,end,mid,label,weight,noWin}] }
+  recomputeLayout();
+
+  function recomputeLayout(){
+    const totalW = SECTIONS.reduce((s,x)=>s+x.weight,0);
+    const full = Math.PI*2;
+    let a = 0;
+    const slices = SECTIONS.map((s)=>{
+      const span = (s.weight/totalW)*full;
+      const start = a;
+      const end = a + span;
+      a = end;
+      return { start, end, mid: (start+end)/2, label:s.label, weight:s.weight, noWin: !!s.noWin };
+    });
+    layout = { totalW, slices };
+  }
+
+  // ------------------ GELUID (Web Audio) ------------------
+  let audioCtx = null, masterGain = null;
+  function ensureAudio(){
+    if (!audioCtx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      audioCtx = new AC();
+      masterGain = audioCtx.createGain();
+      masterGain.gain.value = 0.16;
+      masterGain.connect(audioCtx.destination);
+    }
+  }
+  function playTick(){
+    if (!audioCtx) return;
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = "square";
+    o.frequency.value = 1100 + Math.random()*700;
+    g.gain.value = 0;
+    o.connect(g); g.connect(masterGain);
+    const now = audioCtx.currentTime;
+    g.gain.linearRampToValueAtTime(0.24, now + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
+    o.start(now);
+    o.stop(now + 0.09);
+  }
+  function playWhoosh(){
+    if (!audioCtx) return;
+    const dur = 0.42;
+    const len = Math.floor(audioCtx.sampleRate * dur);
+    const buffer = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i=0;i<len;i++){
+      const t = i/len;
+      data[i] = (Math.random()*2-1) * (1-t);
+    }
+    const src = audioCtx.createBufferSource(); src.buffer = buffer;
+    const biq = audioCtx.createBiquadFilter(); biq.type="lowpass"; biq.frequency.value=900;
+    const g = audioCtx.createGain(); g.gain.value = 0;
+    src.connect(biq); biq.connect(g); g.connect(masterGain);
+    const now = audioCtx.currentTime;
+    g.gain.linearRampToValueAtTime(0.34, now+0.06);
+    g.gain.exponentialRampToValueAtTime(0.0001, now+dur);
+    src.start(now);
+  }
+  function playWin(){
+    if (!audioCtx) return;
+    const now = audioCtx.currentTime;
+    const notes = [523.25, 659.25, 783.99]; // C5 E5 G5
+    notes.forEach((f,i)=>{
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.type = "sine";
+      o.frequency.value = f;
+      g.gain.value = 0;
+      o.connect(g); g.connect(masterGain);
+      const t0 = now + i*0.02;
+      g.gain.linearRampToValueAtTime(0.28, t0+0.05);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0+0.8+i*0.06);
+      o.start(t0);
+      o.stop(t0+0.9+i*0.06);
+    });
+  }
+
+  // -------------- DRAWING ---------------------
+  function colorFor(i){
+    const n = layout.slices.length;
+    const hue = (i*(360/n)+8)%360, sat=65, light=(i%2?36:44);
+    return `hsl(${hue} ${sat}% ${light}%)`;
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    ctx.save(); ctx.translate(CX,CY); ctx.rotate(rotation);
+
+    // rim
+    ctx.beginPath();
+    ctx.arc(0,0,R+20,0,Math.PI*2);
+    const rim = ctx.createRadialGradient(0,0,R,0,0,R+20);
+    rim.addColorStop(0,"#3a4275"); rim.addColorStop(1,"#0b0f22");
+    ctx.fillStyle = rim; ctx.fill();
+
+    // slices
+    const n = layout.slices.length;
+    for(let i=0;i<n;i++){
+      const seg = layout.slices[i];
+      const a0 = seg.start, a1 = seg.end, mid = seg.mid;
+
+      ctx.beginPath(); ctx.moveTo(0,0); ctx.arc(0,0,R,a0,a1); ctx.closePath();
+
+      const is50 = (seg.label.trim()==="50%");
+      if(is50){
+        // 50% = ZWART vlak
+        ctx.fillStyle = "#000";
+        ctx.fill();
+      } else {
+        ctx.fillStyle = colorFor(i);
+        ctx.fill();
+      }
+
+      // highlight overlay (live / lock)
+      const isLive = (dynamicHighlightIdx===i);
+      const isLocked = (lockedIdx===i);
+      if(isLive || isLocked){
+        ctx.save();
+        ctx.globalCompositeOperation = "lighter";
+        ctx.fillStyle = isLocked ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.16)";
+        ctx.fill();
+        ctx.lineWidth = isLocked ? 14 : 10;
+        ctx.strokeStyle = isLocked ? "rgba(255,240,120,0.85)" : "rgba(255,255,255,0.55)";
+        ctx.shadowColor = isLocked ? "rgba(255,210,80,0.85)" : "rgba(255,255,255,0.55)";
+        ctx.shadowBlur = isLocked ? 24 : 14;
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // label
+      const lx=Math.cos(mid)*R_LABEL, ly=Math.sin(mid)*R_LABEL;
+      ctx.save(); ctx.translate(lx,ly); ctx.rotate(mid+Math.PI/2);
+      const baseSize = Math.floor(R*0.08);
+      const is50Label = is50;
+      ctx.font = `${is50Label ? "900" : "700"} ${Math.floor(baseSize*(is50Label?1.18:1))}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
+      ctx.textAlign="center"; ctx.textBaseline="middle";
+      if (is50Label){
+        // 50% = FEL ROOD
+        ctx.fillStyle = "#ff1a1a";
+        ctx.strokeStyle = "rgba(0,0,0,0.4)";
+        ctx.lineWidth = 5;
+      } else {
+        ctx.fillStyle="rgba(255,255,255,.98)";
+        ctx.strokeStyle="rgba(0,0,0,.35)";
+        ctx.lineWidth=5;
+      }
+      ctx.strokeText(seg.label,0,0);
+      ctx.fillText(seg.label,0,0);
+      ctx.restore();
+    }
+
+    // center plate
+    ctx.beginPath(); ctx.arc(0,0,CENTER_PLATE_R,0,Math.PI*2); ctx.fillStyle="#10142b"; ctx.fill();
+
+    // logo of fallback-tekst
+    if(logoImg){
+      const maxW = CENTER_PLATE_R*1.7;
+      const maxH = CENTER_PLATE_R*0.95;
+      const {width, height} = logoImg;
+      const scale = Math.min(maxW/width, maxH/height, 1);
+      const w = width*scale, h = height*scale;
+      ctx.drawImage(logoImg, -w/2, -h/2, w, h);
+    } else {
+      ctx.save();
+      ctx.fillStyle = "white";
+      ctx.font = `700 ${Math.floor(CENTER_PLATE_R*0.42)}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
+      ctx.textAlign="center"; ctx.textBaseline="middle";
+      ctx.fillText("BIEMANS", 0, -CENTER_PLATE_R*0.14);
+      ctx.font = `600 ${Math.floor(CENTER_PLATE_R*0.28)}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
+      ctx.fillStyle = "hsl(210 30% 85%)";
+      ctx.fillText("Polska", 0, CENTER_PLATE_R*0.22);
+      ctx.restore();
+    }
+
+    ctx.restore();
+  }
+
+  // -------------- ANGLE HELPERS --------------
+  function normalize(a){ a%=Math.PI*2; if(a<0)a+=Math.PI*2; return a; }
+
+  function indexAtPointer(rot=rotation){
+    const a = normalize(POINTER_ANGLE - rot);
+    const s = layout.slices;
+    for(let i=0;i<s.length;i++){
+      const seg = s[i];
+      if(a>=seg.start && a<seg.end) return i;
+    }
+    return s.length-1;
+  }
+
+  function rotationForIndex(idx, extraSpins=6+Math.floor(Math.random()*3)){
+    const mid = layout.slices[idx].mid;
+    return extraSpins*Math.PI*2 + (POINTER_ANGLE - mid);
+    }
+
+  function pickRandomAllowedIndex(){
+    const s = layout.slices;
+    const pool = [];
+    for(let i=0;i<s.length;i++){
+      if(EXCLUDE_NOWIN && s[i].noWin) continue; // 50% uitsluiten
+      const span = s[i].end - s[i].start;
+      pool.push({i, w: span});
+    }
+    const total = pool.reduce((t,x)=>t+x.w,0);
+    let r = Math.random()*total;
+    for(const x of pool){
+      if(r < x.w) return x.i;
+      r -= x.w;
+    }
+    return pool[pool.length-1].i;
+  }
+
+  function easeOutQuint(t){return 1-Math.pow(1-t,5)}
+
+  let lastTickIdx = null;
+
+  function animateTo(target, duration=6500){
+    return new Promise(res=>{
+      const start=performance.now(), init=rotation, delta=target-init;
+      (function frame(t){
+        const p=Math.min(1,(t-start)/duration);
+        const eased = easeOutQuint(p);
+        rotation=init+delta*eased;
+
+        // live highlight & tick
+        const idxNow = indexAtPointer(rotation);
+        dynamicHighlightIdx = idxNow;
+        if (spinning && idxNow !== lastTickIdx){
+          playTick();
+          lastTickIdx = idxNow;
+        }
+
+        draw();
+        if(p<1) requestAnimationFrame(frame);
+        else res();
+      })(start);
+    });
+  }
+
+  async function spin(){
+    if(spinning) return;
+    spinning=true;
+    ensureAudio();
+    playWhoosh();
+
+    overlay.classList.remove("show");
+    lockedIdx = null;
+    dynamicHighlightIdx = indexAtPointer(rotation);
+    lastTickIdx = dynamicHighlightIdx;
+
+    let targetIdx = pickRandomAllowedIndex();
+    await animateTo(rotationForIndex(targetIdx));
+    rotation = normalize(rotationForIndex(targetIdx, 0));
+    draw();
+
+    // failsafe: nooit 50%
+    let idx = indexAtPointer(rotation);
+    if (EXCLUDE_NOWIN && layout.slices[idx].noWin){
+      const s = layout.slices;
+      let j = (idx + 1) % s.length;
+      while (s[j].noWin) j = (j + 1) % s.length;
+      rotation = normalize(rotationForIndex(j, 0));
+      idx = j;
+      draw();
+    }
+
+    lockedIdx = idx;
+    dynamicHighlightIdx = null;
+    draw();
+
+    const label = layout.slices[idx].label;
+    valueEl.textContent = label;
+    overlay.classList.add("show");
+    burstConfetti();
+    playWin();
+
+    spinning=false;
+  }
+
+  // -------------- CONFETTI --------------------
+  const particles=[];
+  function burstConfetti(){
+    particles.length=0;
+    const count=260;
+    for(let i=0;i<count;i++){
+      const angle=Math.random()*Math.PI*2;
+      particles.push({
+        x:CX,y:CY,
+        vx:Math.cos(angle)*(2+Math.random()*6),
+        vy:Math.sin(angle)*(2+Math.random()*6)-2,
+        life: 60+Math.random()*40,
+        size: 2+Math.random()*4,
+        rot: Math.random()*Math.PI*2,
+        vr: (Math.random()-.5)*0.3,
+        color:`hsl(${Math.floor(Math.random()*360)} 80% 60%)`
+      });
+    }
+    runConfetti();
+  }
+  let confettiRunning=false;
+  function runConfetti(){
+    if(confettiRunning) return;
+    confettiRunning=true;
+    function step(){
+      cfx.clearRect(0,0,W,H);
+      let alive=0;
+      for(const p of particles){
+        if(p.life>0){
+          p.vy+=0.08; p.x+=p.vx; p.y+=p.vy; p.rot+=p.vr; p.life--;
+          cfx.save(); cfx.translate(p.x,p.y); cfx.rotate(p.rot);
+          cfx.fillStyle=p.color; cfx.fillRect(-p.size/2,-p.size/2,p.size,p.size*1.6);
+          cfx.restore(); alive++;
+        }
+      }
+      if(alive>0) requestAnimationFrame(step);
+      else confettiRunning=false;
+    }
+    requestAnimationFrame(step);
+  }
+
+  // -------------- LOGO LOAD -------------------
+  function loadLogo(src){
+    if(!src) return Promise.resolve(); // fallback: tekst
+    return new Promise((resolve,reject)=>{
+      const img=new Image();
+      img.crossOrigin="anonymous";
+      img.onload=()=>{ logoImg=img; draw(); resolve(); };
+      img.onerror=()=>reject(new Error("Kon logo niet laden"));
+      img.src=src;
+    });
+  }
+
+  // center click detection
+  function onStageClick(ev){
+    ensureAudio(); // audio unlock
+    const rect = wheel.getBoundingClientRect();
+    const x = (ev.clientX - rect.left) * (wheel.width / rect.width);
+    const y = (ev.clientY - rect.top) * (wheel.height / rect.height);
+    const dx = x - CX, dy = y - CY;
+    if(Math.sqrt(dx*dx + dy*dy) <= CENTER_PLATE_R) spin();
+  }
+
+  // -------------- INIT ------------------------
+  const LOGO_SRC = null; // eventueel vervangen door je base64-logo
+  loadLogo(LOGO_SRC).then(()=>draw());
+  draw();
+  stage.addEventListener("click", onStageClick);
+})();
+</script>
+</body>
+</html>
