@@ -3,13 +3,14 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Wheel of Fortune – BIEMANS UK (no-50 win + sound)</title>
+<title>Wheel of Fortune – BIEMANS Polska (no-50 win + sound)</title>
 <style>
   :root { --bg:#0e1122; --text:#eef3ff; }
   html,body{height:100%;margin:0;background:radial-gradient(1200px 700px at 20% -10%, #1a2040 0%, var(--bg) 40%, #070916 100%);color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial}
   .wrap{display:grid;place-items:center;min-height:100%;gap:18px}
   .stage{position:relative;width:min(96vw,900px);aspect-ratio:1/1}
   canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+  /* pointer verwijderd */
   .hint{font-size:12px;color:#a9b7d8;opacity:.75}
   .overlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:10;pointer-events:none;
             background:radial-gradient(600px 400px at 50% 40%, rgba(0,0,0,.25), rgba(0,0,0,.6));}
@@ -23,8 +24,9 @@
     <div class="stage" id="stage" aria-label="Wheel of Fortune (klik midden om te draaien)">
       <canvas id="wheel" width="1200" height="1200"></canvas>
       <canvas id="confetti" width="1200" height="1200"></canvas>
+      <!-- pointer div is verwijderd -->
     </div>
-    <div class="hint"><strong>BIEMANS UK</strong></div>
+    <div class="hint">Klik op het <strong>BIEMANS UK(/strong> logo (midden) om te draaien</div>
   </div>
 
   <div class="overlay" id="overlay"><div class="value" id="value"> </div></div>
@@ -32,8 +34,9 @@
 <script>
 (() => {
   // ------------------ CONFIG ------------------
+  // 50% is uitgesloten (noWin:true) en wordt visueel extra opvallend (zwart vlak + felrode tekst)
   const SECTIONS = [
-    { label: "50%", weight: 2.2, noWin: true },
+    { label: "50%", weight: 2.2, noWin: true }, // uitgesloten, valt op
     { label: "10%", weight: 1 },
     { label: "20%", weight: 1 },
     { label: "0%",  weight: 1 },
@@ -69,19 +72,21 @@
   const W = wheel.width, H = wheel.height;
   const CX = W/2, CY = H/2;
 
-  const R = Math.min(W,H)*0.46;
-  const R_LABEL = R*0.78;
-  const CENTER_PLATE_R = R*0.32;
-  const POINTER_ANGLE = -Math.PI/2;
+  const R = Math.min(W,H)*0.46;      // radius wiel
+  const R_LABEL = R*0.78;            // tekstpositie
+  const CENTER_PLATE_R = R*0.32;     // klikbare midden
+  const POINTER_ANGLE = -Math.PI/2;  // pijl-oriëntatie (visueel is pijl weg)
 
   let rotation = 0;
   let spinning = false;
   let logoImg = null;
 
-  let dynamicHighlightIdx = null;
-  let lockedIdx = null;
+  // highlight state
+  let dynamicHighlightIdx = null; // live segment
+  let lockedIdx = null;           // winnende segment (blijft opgelicht)
 
-  let layout = null;
+  // ---- variabele segment-layout (cumulatieve hoeken) ----
+  let layout = null; // { totalW, slices:[{start,end,mid,label,weight,noWin}] }
   recomputeLayout();
 
   function recomputeLayout(){
@@ -105,14 +110,10 @@
       const AC = window.AudioContext || window.webkitAudioContext;
       audioCtx = new AC();
       masterGain = audioCtx.createGain();
-
-      // ✅ HARDER / VOLLER BASISVOLUME
-      masterGain.gain.value = 0.28;
-
+      masterGain.gain.value = 0.16;
       masterGain.connect(audioCtx.destination);
     }
   }
-
   function playTick(){
     if (!audioCtx) return;
     const o = audioCtx.createOscillator();
@@ -127,7 +128,6 @@
     o.start(now);
     o.stop(now + 0.09);
   }
-
   function playWhoosh(){
     if (!audioCtx) return;
     const dur = 0.42;
@@ -147,156 +147,23 @@
     g.gain.exponentialRampToValueAtTime(0.0001, now+dur);
     src.start(now);
   }
-
-  // ✅ FEESTELIJKE FANFARE WIN SOUND
   function playWin(){
     if (!audioCtx) return;
     const now = audioCtx.currentTime;
-
-    // 1) stinger opbouw
-    const stinger = [392.00, 523.25, 659.25, 783.99]; // G4 C5 E5 G5
-    stinger.forEach((f,i)=>{
-      const o = audioCtx.createOscillator();
-      const g = audioCtx.createGain();
-      o.type = "triangle";
-      o.frequency.value = f;
-      g.gain.value = 0;
-      o.connect(g); g.connect(masterGain);
-
-      const t0 = now + i*0.05;
-      g.gain.linearRampToValueAtTime(0.22, t0+0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, t0+0.25);
-      o.start(t0);
-      o.stop(t0+0.28);
-    });
-
-    // 2) akkoorden
-    const chords = [
-      [523.25, 659.25, 783.99],      // C E G
-      [392.00, 493.88, 587.33],      // G B D
-      [523.25, 659.25, 783.99, 1046] // C E G C
-    ];
-
-    chords.forEach((chord, i) => {
-      chord.forEach((f) => {
-        const o = audioCtx.createOscillator();
-        const g = audioCtx.createGain();
-        o.type = "sine";
-        o.frequency.value = f;
-        g.gain.value = 0;
-        o.connect(g); g.connect(masterGain);
-
-        const t0 = now + 0.25 + i*0.22;
-        g.gain.linearRampToValueAtTime(0.16, t0+0.03);
-        g.gain.exponentialRampToValueAtTime(0.0001, t0+0.65);
-        o.start(t0);
-        o.stop(t0+0.70);
-      });
-    });
-
-    // 3) sparkle
-    for(let i=0;i<10;i++){
+    const notes = [523.25, 659.25, 783.99]; // C5 E5 G5
+    notes.forEach((f,i)=>{
       const o = audioCtx.createOscillator();
       const g = audioCtx.createGain();
       o.type = "sine";
-      o.frequency.value = 1200 + Math.random()*1200;
+      o.frequency.value = f;
       g.gain.value = 0;
       o.connect(g); g.connect(masterGain);
-      const t0 = now + 0.20 + Math.random()*0.60;
-      g.gain.linearRampToValueAtTime(0.09, t0+0.01);
-      g.gain.exponentialRampToValueAtTime(0.0001, t0+0.10);
+      const t0 = now + i*0.02;
+      g.gain.linearRampToValueAtTime(0.28, t0+0.05);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0+0.8+i*0.06);
       o.start(t0);
-      o.stop(t0+0.12);
-    }
-  }
-
-  // ✅ CROWD CHEER + CLAPS
-  function playCheer(){
-    if (!audioCtx) return;
-    const now = audioCtx.currentTime;
-    const dur = 1.6;
-
-    // 1) crowd noise
-    const len = Math.floor(audioCtx.sampleRate * dur);
-    const buffer = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
-    const data = buffer.getChannelData(0);
-
-    for (let i=0;i<len;i++){
-      const t = i/len;
-      data[i] = (Math.random()*2-1) * (1 - t*0.75);
-    }
-
-    const src = audioCtx.createBufferSource();
-    src.buffer = buffer;
-
-    const hp = audioCtx.createBiquadFilter();
-    hp.type = "highpass";
-    hp.frequency.value = 180;
-
-    const bp = audioCtx.createBiquadFilter();
-    bp.type = "bandpass";
-    bp.frequency.value = 950;
-    bp.Q.value = 0.7;
-
-    const lp = audioCtx.createBiquadFilter();
-    lp.type = "lowpass";
-    lp.frequency.value = 2600;
-
-    const g = audioCtx.createGain();
-    g.gain.value = 0;
-
-    src.connect(hp);
-    hp.connect(bp);
-    bp.connect(lp);
-    lp.connect(g);
-    g.connect(masterGain);
-
-    g.gain.linearRampToValueAtTime(0.0, now);
-    g.gain.linearRampToValueAtTime(0.65, now + 0.10);
-    g.gain.linearRampToValueAtTime(0.45, now + 0.55);
-    g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
-
-    src.start(now);
-    src.stop(now + dur);
-
-    // 2) clap bursts
-    function clap(at){
-      const clapDur = 0.10;
-      const clapLen = Math.floor(audioCtx.sampleRate * clapDur);
-      const clapBuf = audioCtx.createBuffer(1, clapLen, audioCtx.sampleRate);
-      const d = clapBuf.getChannelData(0);
-
-      for(let i=0;i<clapLen;i++){
-        const t = i/clapLen;
-        d[i] = (Math.random()*2-1) * Math.pow(1-t, 3);
-      }
-
-      const s = audioCtx.createBufferSource();
-      s.buffer = clapBuf;
-
-      const bp2 = audioCtx.createBiquadFilter();
-      bp2.type = "bandpass";
-      bp2.frequency.value = 1800;
-      bp2.Q.value = 1.2;
-
-      const gg = audioCtx.createGain();
-      gg.gain.value = 0;
-
-      s.connect(bp2);
-      bp2.connect(gg);
-      gg.connect(masterGain);
-
-      gg.gain.linearRampToValueAtTime(0.0001, at);
-      gg.gain.linearRampToValueAtTime(0.55, at+0.01);
-      gg.gain.exponentialRampToValueAtTime(0.0001, at+clapDur);
-
-      s.start(at);
-      s.stop(at+clapDur);
-    }
-
-    for(let i=0;i<8;i++){
-      clap(now + 0.15 + i*0.11 + Math.random()*0.05);
-    }
+      o.stop(t0+0.9+i*0.06);
+    });
   }
 
   // -------------- DRAWING ---------------------
@@ -310,12 +177,14 @@
     ctx.clearRect(0,0,W,H);
     ctx.save(); ctx.translate(CX,CY); ctx.rotate(rotation);
 
+    // rim
     ctx.beginPath();
     ctx.arc(0,0,R+20,0,Math.PI*2);
     const rim = ctx.createRadialGradient(0,0,R,0,0,R+20);
     rim.addColorStop(0,"#3a4275"); rim.addColorStop(1,"#0b0f22");
     ctx.fillStyle = rim; ctx.fill();
 
+    // slices
     const n = layout.slices.length;
     for(let i=0;i<n;i++){
       const seg = layout.slices[i];
@@ -325,6 +194,7 @@
 
       const is50 = (seg.label.trim()==="50%");
       if(is50){
+        // 50% = ZWART vlak
         ctx.fillStyle = "#000";
         ctx.fill();
       } else {
@@ -332,6 +202,7 @@
         ctx.fill();
       }
 
+      // highlight overlay (live / lock)
       const isLive = (dynamicHighlightIdx===i);
       const isLocked = (lockedIdx===i);
       if(isLive || isLocked){
@@ -347,6 +218,7 @@
         ctx.restore();
       }
 
+      // label
       const lx=Math.cos(mid)*R_LABEL, ly=Math.sin(mid)*R_LABEL;
       ctx.save(); ctx.translate(lx,ly); ctx.rotate(mid+Math.PI/2);
       const baseSize = Math.floor(R*0.08);
@@ -354,6 +226,7 @@
       ctx.font = `${is50Label ? "900" : "700"} ${Math.floor(baseSize*(is50Label?1.18:1))}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
       ctx.textAlign="center"; ctx.textBaseline="middle";
       if (is50Label){
+        // 50% = FEL ROOD
         ctx.fillStyle = "#ff1a1a";
         ctx.strokeStyle = "rgba(0,0,0,0.4)";
         ctx.lineWidth = 5;
@@ -370,7 +243,7 @@
     // center plate
     ctx.beginPath(); ctx.arc(0,0,CENTER_PLATE_R,0,Math.PI*2); ctx.fillStyle="#10142b"; ctx.fill();
 
-    // ✅ MIDDEN TEKST: BIEMANS UK
+    // logo of fallback-tekst
     if(logoImg){
       const maxW = CENTER_PLATE_R*1.7;
       const maxH = CENTER_PLATE_R*0.95;
@@ -384,16 +257,16 @@
       ctx.font = `700 ${Math.floor(CENTER_PLATE_R*0.42)}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
       ctx.textAlign="center"; ctx.textBaseline="middle";
       ctx.fillText("BIEMANS", 0, -CENTER_PLATE_R*0.14);
-
-      ctx.font = `700 ${Math.floor(CENTER_PLATE_R*0.30)}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
+      ctx.font = `600 ${Math.floor(CENTER_PLATE_R*0.28)}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
       ctx.fillStyle = "hsl(210 30% 85%)";
-      ctx.fillText("UK", 0, CENTER_PLATE_R*0.24);
+      ctx.fillText("UK", 0, CENTER_PLATE_R*0.22);
       ctx.restore();
     }
 
     ctx.restore();
   }
 
+  // -------------- ANGLE HELPERS --------------
   function normalize(a){ a%=Math.PI*2; if(a<0)a+=Math.PI*2; return a; }
 
   function indexAtPointer(rot=rotation){
@@ -409,13 +282,13 @@
   function rotationForIndex(idx, extraSpins=6+Math.floor(Math.random()*3)){
     const mid = layout.slices[idx].mid;
     return extraSpins*Math.PI*2 + (POINTER_ANGLE - mid);
-  }
+    }
 
   function pickRandomAllowedIndex(){
     const s = layout.slices;
     const pool = [];
     for(let i=0;i<s.length;i++){
-      if(EXCLUDE_NOWIN && s[i].noWin) continue;
+      if(EXCLUDE_NOWIN && s[i].noWin) continue; // 50% uitsluiten
       const span = s[i].end - s[i].start;
       pool.push({i, w: span});
     }
@@ -440,6 +313,7 @@
         const eased = easeOutQuint(p);
         rotation=init+delta*eased;
 
+        // live highlight & tick
         const idxNow = indexAtPointer(rotation);
         dynamicHighlightIdx = idxNow;
         if (spinning && idxNow !== lastTickIdx){
@@ -470,6 +344,7 @@
     rotation = normalize(rotationForIndex(targetIdx, 0));
     draw();
 
+    // failsafe: nooit 50%
     let idx = indexAtPointer(rotation);
     if (EXCLUDE_NOWIN && layout.slices[idx].noWin){
       const s = layout.slices;
@@ -486,13 +361,9 @@
 
     const label = layout.slices[idx].label;
     valueEl.textContent = label;
-
-    // ✅ Uitslag verschijnt → overlay + confetti + cheer + (win iets later)
     overlay.classList.add("show");
     burstConfetti();
-
-    playCheer();
-    setTimeout(() => playWin(), 120);
+    playWin();
 
     spinning=false;
   }
@@ -517,7 +388,6 @@
     }
     runConfetti();
   }
-
   let confettiRunning=false;
   function runConfetti(){
     if(confettiRunning) return;
@@ -539,8 +409,9 @@
     requestAnimationFrame(step);
   }
 
+  // -------------- LOGO LOAD -------------------
   function loadLogo(src){
-    if(!src) return Promise.resolve();
+    if(!src) return Promise.resolve(); // fallback: tekst
     return new Promise((resolve,reject)=>{
       const img=new Image();
       img.crossOrigin="anonymous";
@@ -550,8 +421,9 @@
     });
   }
 
+  // center click detection
   function onStageClick(ev){
-    ensureAudio();
+    ensureAudio(); // audio unlock
     const rect = wheel.getBoundingClientRect();
     const x = (ev.clientX - rect.left) * (wheel.width / rect.width);
     const y = (ev.clientY - rect.top) * (wheel.height / rect.height);
@@ -559,12 +431,12 @@
     if(Math.sqrt(dx*dx + dy*dy) <= CENTER_PLATE_R) spin();
   }
 
-  const LOGO_SRC = null;
+  // -------------- INIT ------------------------
+  const LOGO_SRC = null; // eventueel vervangen door je base64-logo
   loadLogo(LOGO_SRC).then(()=>draw());
   draw();
   stage.addEventListener("click", onStageClick);
 })();
 </script>
 </body>
-</html>
-
+</html>   1 in midden inplaats van Biemans Polska en wanneer de uitslag verschijnt
